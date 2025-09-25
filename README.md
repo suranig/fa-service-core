@@ -1,5 +1,8 @@
 # FA Service Core
 
+[![PyPI version](https://img.shields.io/pypi/v/fa-service-core.svg)](https://pypi.org/project/fa-service-core/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/fa-service-core.svg)](https://pypi.org/project/fa-service-core/)
+
 FastAPI microservices core library dla systemu CMS z multi-tenancy i Row-Level Security.
 
 ## 🚀 Główne funkcjonalności
