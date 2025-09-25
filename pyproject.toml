@@ -7,7 +7,7 @@ packages = ["core"]
 
 [project]
 name = "fa-service-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "FastAPI microservices core library for CMS with multi-tenancy, RLS, and async SQLAlchemy"
 readme = "README.md"
 requires-python = ">=3.13"

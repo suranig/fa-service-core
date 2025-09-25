@@ -1,19 +1,21 @@
 # FA Service Core
 
-FastAPI microservices core library dla systemu CMS w architekturze mikroserwisów.
+FastAPI microservices core library dla systemu CMS z multi-tenancy i Row-Level Security.
 
-## Funkcjonalności
+## 🚀 Główne funkcjonalności
 
-- **Dwu-poolowe połączenia bazy danych** - oddzielne poole dla operacji write/read
-- **Row Level Security (RLS)** - izolacja danych na poziomie site/tenant
-- **Unit of Work pattern** - zarządzanie transakcjami z kontekstem site
-- **Idempotency middleware** - deduplikacja requestów
-- **Audit logging** - śledzenie zmian z JSON Patch RFC6902
-- **Wersjonowanie** - historia zmian zasobów
-- **Outbox pattern** - niezawodne publikowanie eventów
-- **Observability** - request tracing, logging
-- **Schema-driven API** - automatyczne generowanie schematów dla frontend
-- **Custom actions** - rozszerzalne akcje biznesowe
+- **🏗️ Repository Pattern** - generyczna klasa bazowa z filtrami, sortowaniem, paginacją
+- **🔍 Query Parameters** - automatyczny parsing parametrów FastAPI z Pydantic v2
+- **🗄️ Dwu-poolowe połączenia** - oddzielne poole write/read z PgBouncer
+- **🔒 Row Level Security (RLS)** - izolacja danych na poziomie site/tenant
+- **⚖️ Unit of Work pattern** - zarządzanie transakcjami z kontekstem site
+- **🔄 Idempotency middleware** - deduplikacja requestów
+- **📝 Audit logging** - śledzenie zmian z JSON Patch RFC6902
+- **📦 Wersjonowanie** - historia zmian zasobów
+- **📤 Outbox pattern** - niezawodne publikowanie eventów
+- **👁️ Observability** - request tracing, strukturalne logowanie
+- **📋 Schema-driven API** - automatyczne generowanie schematów dla frontend
+- **⚡ Custom actions** - rozszerzalne akcje biznesowe
 
 ## Wymagania
 
@@ -21,18 +23,177 @@ FastAPI microservices core library dla systemu CMS w architekturze mikroserwisó
 - PostgreSQL 17.6+
 - Redis (opcjonalnie, dla cache'u)
 
-## Instalacja
+## 📦 Instalacja
 
 ```bash
-# Klonowanie repo
+# Instalacja z PyPI
+pip install fa-service-core
+
+# Lub instalacja z źródeł
 git clone <repository-url>
 cd fa-service-core
-
-# Instalacja z zależnościami deweloperskimi
-make install-dev
-
-# Lub podstawowa instalacja
 pip install -e .
+```
+
+## 🚀 Quick Start
+
+### 1. Stwórz mikroservice z Repository pattern
+
+```python
+# models.py
+from uuid import UUID
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from core.models import Base
+
+class Page(Base):
+    __tablename__ = "pages"
+    
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    site_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+
+# repository.py
+from core.repository import BaseRepository
+from core.uow import write_uow, read_uow
+from sqlalchemy.ext.asyncio import AsyncSession
+
+class PageRepository(BaseRepository[Page]):
+    def __init__(self):
+        super().__init__(Page)
+    
+    async def get_by_id(self, session: AsyncSession, site_id: UUID, entity_id: UUID) -> Page | None:
+        result = await session.get(Page, entity_id)
+        return result if result and result.site_id == site_id else None
+    
+    async def create(self, session: AsyncSession, site_id: UUID, data: dict) -> Page:
+        page = Page(site_id=site_id, **data)
+        session.add(page)
+        await session.flush()
+        return page
+
+# FastAPI endpoint
+from fastapi import FastAPI, Depends
+from core.site_resolver import site_id_dep
+from core.query_params import QueryParams
+
+app = FastAPI()
+page_repo = PageRepository()
+
+@app.get("/pages")
+async def list_pages(
+    query: QueryParams = Depends(),
+    site_id: UUID = Depends(site_id_dep),
+):
+    options = query.to_query_options()
+    async with read_uow(site_id) as session:
+        result = await page_repo.list(session, site_id, options)
+    return result
+```
+
+### 2. Użyj filtrów i sortowania
+
+```bash
+# Podstawowe listowanie
+GET /pages?page=1&page_size=20
+
+# Filtrowanie
+GET /pages?filter[]=status:eq:published&filter[]=created_at:gte:2024-01-01
+
+# Sortowanie
+GET /pages?sort=created_at:desc,title:asc
+
+# Wyszukiwanie
+GET /pages?search=lorem&filter[]=status:in:published,draft
+
+# Kombinacja wszystkich
+GET /pages?filter[]=status:eq:published&sort=created_at:desc&page=2&page_size=10&search=fastapi
+```
+
+### 4. Dostępne operatory filtrów
+
+```bash
+# Operatory porównania
+filter[]=price:eq:100          # równe
+filter[]=price:ne:100          # nie równe  
+filter[]=price:gt:100          # większe niż
+filter[]=price:gte:100         # większe lub równe
+filter[]=price:lt:100          # mniejsze niż
+filter[]=price:lte:100         # mniejsze lub równe
+
+# Operatory tekstowe
+filter[]=title:like:%lorem%    # zawiera (LIKE)
+filter[]=title:ilike:%Lorem%   # zawiera bez case-sensitive
+
+# Operatory list
+filter[]=status:in:draft,published,archived    # w liście
+filter[]=status:not_in:spam,deleted           # nie w liście
+
+# Operatory NULL
+filter[]=deleted_at:is_null        # jest NULL
+filter[]=deleted_at:is_not_null    # nie jest NULL
+
+# Operatory zakresu
+filter[]=created_at:between:2024-01-01,2024-12-31
+
+# PostgreSQL JSONB (dla pól JSON)
+filter[]=metadata:contains:{"featured":true}
+filter[]=tags:jsonb_path:$.tags[*] ? (@ == "fastapi")
+```
+
+### 5. Użyj Custom Actions
+
+```python
+from core.actions import action, ActionContext, ActionResult
+
+@action(name="publish", resource="pages")
+async def publish_page(context: ActionContext, payload: dict) -> ActionResult:
+    # Implementacja publikacji strony
+    async with write_uow(context.site_id) as session:
+        page = await page_repo.get_by_id(session, context.site_id, context.resource_id)
+        if not page:
+            return ActionResult(success=False, message="Page not found")
+        
+        page.status = "published"
+        await session.flush()
+        
+        return ActionResult(
+            success=True,
+            message="Page published successfully",
+            data={"status": page.status}
+        )
+
+# Użycie w endpoint
+@app.post("/pages/{page_id}:publish")
+async def publish_page_endpoint(
+    page_id: UUID,
+    site_id: UUID = Depends(site_id_dep)
+):
+    context = ActionContext(site_id=site_id, resource_id=page_id, action_name="publish")
+    return await publish_page(context, {})
+```
+
+### 6. Ustaw bazy danych
+
+```python
+# main.py
+from core.db import DatabaseManager, get_db_manager
+from core.site_resolver import init_site_resolver
+
+async def startup():
+    # Inicializuj połączenia do bazy
+    db_manager = get_db_manager()
+    await db_manager.init_db(
+        write_db_url="postgresql+asyncpg://user:pass@localhost/db",
+        read_db_url="postgresql+asyncpg://user:pass@localhost/db_read"
+    )
+    
+    # Inicializuj site resolver
+    await init_site_resolver(db_manager, cache_ttl=300)
+
+app.add_event_handler("startup", startup)
 ```
 
 ## Konfiguracja środowiska
