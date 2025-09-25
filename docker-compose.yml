@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - Write database
+  postgres-write:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: fa_cms
+      POSTGRES_USER: fa_user
+      POSTGRES_PASSWORD: fa_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_write_data:/var/lib/postgresql/data
+      - ./scripts/postgres_init.sql:/docker-entrypoint-initdb.d/01_init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fa_user -d fa_cms"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL - Read database (replica simulation)
+  postgres-read:
+    image: postgres:17.6
+    environment:
+      POSTGRES_DB: fa_cms
+      POSTGRES_USER: fa_user
+      POSTGRES_PASSWORD: fa_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_read_data:/var/lib/postgresql/data
+      - ./scripts/postgres_init.sql:/docker-entrypoint-initdb.d/01_init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fa_user -d fa_cms"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # PgBouncer for connection pooling
+  pgbouncer-write:
+    image: pgbouncer/pgbouncer:latest
+    environment:
+      DATABASES_HOST: postgres-write
+      DATABASES_PORT: 5432
+      DATABASES_USER: fa_user
+      DATABASES_PASSWORD: fa_password
+      DATABASES_DBNAME: fa_cms
+      POOL_MODE: transaction
+      SERVER_RESET_QUERY: DISCARD ALL
+      MAX_CLIENT_CONN: 100
+      DEFAULT_POOL_SIZE: 20
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres-write:
+        condition: service_healthy
+
+  pgbouncer-read:
+    image: pgbouncer/pgbouncer:latest
+    environment:
+      DATABASES_HOST: postgres-read
+      DATABASES_PORT: 5432
+      DATABASES_USER: fa_user
+      DATABASES_PASSWORD: fa_password
+      DATABASES_DBNAME: fa_cms
+      POOL_MODE: transaction
+      SERVER_RESET_QUERY: DISCARD ALL
+      MAX_CLIENT_CONN: 100
+      DEFAULT_POOL_SIZE: 20
+    ports:
+      - "6433:5432"
+    depends_on:
+      postgres-read:
+        condition: service_healthy
+
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+
+
+volumes:
+  postgres_write_data:
+  postgres_read_data:
+  redis_data:
+
+networks:
+  default:
+    driver: bridge
