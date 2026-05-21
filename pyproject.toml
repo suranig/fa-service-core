@@ -33,7 +33,6 @@ dependencies = [
     "pydantic==2.10.2",
     "uvicorn[standard]==0.32.0",
     "jsonpatch==1.33",
-    "asyncio-compat==0.1.2",
     "python-multipart==0.0.12",
     "httpx==0.28.1",
     "alembic==1.16.5",
